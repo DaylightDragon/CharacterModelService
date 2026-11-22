@@ -23,6 +23,14 @@ public final class ChatModels {
         }
     }
 
+    public record RollbackResult(
+            boolean found,
+            String conversationId,
+            long targetMessageId,
+            String activeResponseId,
+            int removedSteps
+    ) {}
+
     /**
      * Результат обращения к высокоуровневому сервису:
      * либо можно читать стрим чанков, либо модель сейчас занята.

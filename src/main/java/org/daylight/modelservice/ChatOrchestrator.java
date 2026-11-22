@@ -19,6 +19,10 @@ public class ChatOrchestrator {
     }
 
     public ChatModels.AskOutcome askStream(String conversationId, String prompt) {
+        return askStream(conversationId, prompt, null);
+    }
+
+    public ChatModels.AskOutcome askStream(String conversationId, String prompt, Long messageId) {
         String effectiveConvId = (conversationId == null || conversationId.isBlank())
                 ? UUID.randomUUID().toString()
                 : conversationId;
@@ -46,10 +50,10 @@ public class ChatOrchestrator {
             Stream<ChatModels.StreamChunk> stream = lmClient.streamChat(
                     prompt,
                     prevId,
-                    newResponseId -> registry.updateResponseId(effectiveConvId, newResponseId),
+                    newResponseId -> registry.recordResponse(effectiveConvId, messageId, newResponseId),
                     () -> {
-                        System.out.println("[Orchestrator] Сброс устаревшего responseId для диалога: " + effectiveConvId);
-                        registry.resetConversation(effectiveConvId);
+                        System.out.println("[Orchestrator] Узел не найден на текущем сервере, сбрасываю текущий ID для: " + effectiveConvId);
+                        registry.invalidateCurrentResponseId(effectiveConvId);
                     }
             ).onClose(releaseLock);
 
@@ -58,6 +62,10 @@ public class ChatOrchestrator {
             releaseLock.run();
             throw e;
         }
+    }
+
+    public ChatModels.RollbackResult rollbackBeforeMessage(String conversationId, long messageId) {
+        return registry.rollbackBeforeMessage(conversationId, messageId);
     }
 
     public boolean resetConversation(String conversationId) {

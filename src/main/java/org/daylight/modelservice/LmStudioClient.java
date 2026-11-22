@@ -18,16 +18,16 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 public class LmStudioClient {
-
     private final HttpClient httpClient;
     private final ObjectMapper mapper;
     private final String endpointUrl;
     private final String model;
     private final String reasoning;
     private final String systemPrompt;
+    private final Integer maxOutputTokens = 300;
 
     public LmStudioClient(String endpointUrl, String model, ObjectMapper mapper) {
-        this(endpointUrl, model, "off", null, mapper);
+        this(endpointUrl, model, "on", null, mapper);
     }
 
     public LmStudioClient(
@@ -53,12 +53,15 @@ public class LmStudioClient {
             Consumer<String> onResponseIdCompleted,
             Runnable onInvalidPreviousId
     ) {
+        System.out.println("Sending prompt: " + prompt);
+
         boolean hasPrevId = previousResponseId != null && !previousResponseId.isBlank();
 
         ObjectNode payload = mapper.createObjectNode();
         payload.put("model", model);
         payload.put("input", prompt);
         payload.put("stream", true);
+//        payload.put("max_output_tokens", 150);
 
         if (reasoning != null && !reasoning.isBlank()) {
             payload.put("reasoning", reasoning);

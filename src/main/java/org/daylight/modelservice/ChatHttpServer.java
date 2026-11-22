@@ -39,10 +39,12 @@ public class ChatHttpServer {
 
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
         server.createContext("/api/chat", chatServer::handleChat);
+        server.createContext("/api/chat/rollback", chatServer::handleRollback);
         server.createContext("/api/chat/reset", chatServer::handleReset);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.start();
         System.out.println("Server running on http://localhost:" + PORT + "/api/chat");
+        System.out.println("Registry file path: " + REGISTRY_FILE.toAbsolutePath());
     }
 
     private void handleChat(HttpExchange exchange) throws IOException {
@@ -54,13 +56,14 @@ public class ChatHttpServer {
         Map<String, String> params = parseQuery(exchange.getRequestURI().getRawQuery());
         String conversationId = params.get("conversationId");
         String prompt = params.getOrDefault("prompt", "");
+        Long messageId = parseLongOrNull(params.get("messageId"));
 
         if (prompt.isBlank()) {
             sendJson(exchange, 400, "{\"error\":\"prompt is required\"}");
             return;
         }
 
-        ChatModels.AskOutcome outcome = orchestrator.askStream(conversationId, prompt);
+        ChatModels.AskOutcome outcome = orchestrator.askStream(conversationId, prompt, messageId);
 
         switch (outcome) {
             case ChatModels.AskOutcome.Busy busy -> {
@@ -99,10 +102,38 @@ public class ChatHttpServer {
     }
 
     /**
-     * Заготовка принудительного сброса:
-     * GET /api/chat/reset?conversationId=discord-channel-1573824579984564304
-     * GET /api/chat/reset?all=true
+     * Откат до указанного сообщения:
+     * /api/chat/rollback?conversationId=discord-channel-...&beforeMessageId=123456789
      */
+    private void handleRollback(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod()) && !"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(405, -1);
+            return;
+        }
+
+        Map<String, String> params = parseQuery(exchange.getRequestURI().getRawQuery());
+        String conversationId = params.get("conversationId");
+        Long beforeMessageId = parseLongOrNull(params.get("beforeMessageId"));
+
+        if (conversationId == null || conversationId.isBlank() || beforeMessageId == null) {
+            sendJson(exchange, 400, "{\"error\":\"conversationId and beforeMessageId are required\"}");
+            return;
+        }
+
+        ChatModels.RollbackResult res = orchestrator.rollbackBeforeMessage(conversationId, beforeMessageId);
+        ObjectNode body = mapper.createObjectNode();
+        body.put("status", res.found() ? "ok" : "not_found");
+        body.put("conversationId", res.conversationId());
+        body.put("beforeMessageId", res.targetMessageId());
+        body.put("removedSteps", res.removedSteps());
+        if (res.activeResponseId() != null) {
+            body.put("activeResponseId", res.activeResponseId());
+        } else {
+            body.putNull("activeResponseId");
+        }
+        sendJson(exchange, res.found() ? 200 : 404, mapper.writeValueAsString(body));
+    }
+
     private void handleReset(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod()) && !"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
             exchange.sendResponseHeaders(405, -1);
@@ -132,6 +163,15 @@ public class ChatHttpServer {
         resp.put("conversationId", conversationId);
         resp.put("existed", removed);
         sendJson(exchange, 200, mapper.writeValueAsString(resp));
+    }
+
+    private static Long parseLongOrNull(String val) {
+        if (val == null || val.isBlank()) return null;
+        try {
+            return Long.parseLong(val.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private void sendJson(HttpExchange exchange, int status, String body) throws IOException {
